@@ -174,78 +174,85 @@ export default function SmartGuard() {
   }
 
   /* ---------------- RECOGNITION LOOP ---------------- */
-  useEffect(() => {
-    if (!faceMatcher) return;
+/* ---------------- RECOGNITION LOOP ---------------- */
+useEffect(() => {
+  if (!faceMatcher) return;
 
-    let animationId: number;
-    let authorizedFrames = 0;
-    const REQUIRED_FRAMES = 3;
+  let animationId: number;
 
-    const detect = async () => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas) return;
+  const detect = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
 
-      if (video.readyState !== 4) {
-        animationId = requestAnimationFrame(detect);
-        return;
-      }
-
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-      canvas.width = width;
-      canvas.height = height;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      ctx.clearRect(0, 0, width, height);
-
-      const detections = await faceapi
-        .detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
-
-      let unknownFound = false;
-
-      detections.forEach((det) => {
-        const match = faceMatcher.findBestMatch(det.descriptor);
-        const isUnknown = match.label === "unknown";
-        if (isUnknown) unknownFound = true;
-
-        const { x, y, width: w, height: h } = det.detection.box;
-
-        ctx.strokeStyle = isUnknown ? "#ff0000" : "#00ff00";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, w, h);
-
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.font = "14px monospace";
-        ctx.fillText(match.toString(), x, y - 6);
-      });
-
-      setObjectCount(detections.length);
-
-      if (detections.length > 0 && !unknownFound) {
-        authorizedFrames++;
-        if (authorizedFrames >= REQUIRED_FRAMES) {
-          setStatus("Authorized");
-        }
-      } else if (unknownFound) {
-        authorizedFrames = 0;
-        setStatus("Unknown Person Detected");
-      } else {
-        authorizedFrames = 0;
-        setStatus("No Face Detected");
-      }
-
+    if (video.readyState !== 4) {
       animationId = requestAnimationFrame(detect);
+      return;
+    }
+
+    const displaySize = {
+      width: video.videoWidth,
+      height: video.videoHeight,
     };
 
-    detect();
+    faceapi.matchDimensions(canvas, displaySize);
 
-    return () => cancelAnimationFrame(animationId);
-  }, [faceMatcher]);
+    const detections = await faceapi
+      .detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+
+    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    setObjectCount(resizedDetections.length);
+
+    if (resizedDetections.length === 0) {
+      setStatus("No Face Detected");
+    }
+
+    resizedDetections.forEach((detection) => {
+      const match = faceMatcher.findBestMatch(detection.descriptor);
+
+      const isAuthorized = match.label !== "unknown";
+
+      const box = detection.detection.box;
+
+      // GREEN for authorized
+      if (isAuthorized) {
+        ctx.strokeStyle = "#00ff00";
+        setStatus("Authorized");
+      } 
+      // RED for unauthorized
+      else {
+        ctx.strokeStyle = "#ff0000";
+        setStatus("Unauthorized Person");
+      }
+
+      ctx.lineWidth = 3;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.font = "16px Arial";
+      ctx.fillText(
+        isAuthorized ? `Authorized: ${match.label}` : "Unauthorized",
+        box.x,
+        box.y - 10
+      );
+    });
+
+    animationId = requestAnimationFrame(detect);
+  };
+
+  detect();
+
+  return () => cancelAnimationFrame(animationId);
+}, [faceMatcher]);
+
 
   return (
     <div className="min-h-screen bg-[#0b0f19] text-gray-200 font-mono">
